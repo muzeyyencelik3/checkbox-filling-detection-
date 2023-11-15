@@ -32,7 +32,11 @@ int main() {
 
        //kodu buraya eklicez.
 
+          // Convert the frame to grayscale
+        cv::Mat gray;
+        cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
 
+      
 
 
 
