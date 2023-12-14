@@ -1,0 +1,144 @@
+#include <iostream>
+#include <fstream>
+#include <opencv2/opencv.hpp>
+
+int main() {
+    // Initialize OpenCV video capture object
+    cv::VideoCapture cap(0);
+
+    // Check if camera opened successfully
+    if (!cap.isOpened()) {
+        std::cout << "Error opening video stream or file" << std::endl;
+        return -1;
+    }
+
+    // Define variables
+    cv::Mat frame, gray, blur, edge;
+
+    // Define bird's eye view perspective matrix
+    cv::Point2f src[4] = {cv::Point2f(115, 235), cv::Point2f(575, 235), cv::Point2f(575, 605), cv::Point2f(115, 605)};
+    cv::Point2f dst[4] = {cv::Point2f(0, 0), cv::Point2f(640, 0), cv::Point2f(640, 480), cv::Point2f(0, 480)};
+    cv::Mat perspectiveMatrix = cv::getPerspectiveTransform(src, dst);
+
+    // Define variables for checkbox and question detection
+    std::vector<cv::Rect> questions;
+    std::vector<cv::Rect> checkboxes;
+
+    // Open a text file for writing answers
+    std::ofstream answersFile("answers.txt");
+
+    // Loop until user presses 'ESC' key
+    while (true) {
+        // Capture frame by frame
+        cap >> frame;
+
+        // Check if frame is empty
+        if (frame.empty()) {
+            std::cout << "Frame not found!" << std::endl;
+            break;
+        }
+
+        // Apply perspective transform
+        cv::warpPerspective(frame, frame, perspectiveMatrix, frame.size());
+
+        // Convert to grayscale
+        cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+
+        // Apply Gaussian blur
+        cv::GaussianBlur(gray, blur, cv::Size(5, 5), 0);
+
+        // Detect edges
+        cv::Canny(blur, edge, 100, 200);
+
+        // Find contours in the edge detected image
+        std::vector<std::vector<cv::Point>> contours;
+        cv::findContours(edge, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+        // Iterate through each contour and find rectangles (forms)
+        for (auto &contour : contours) {
+            // Find contour approximation (rectangle)
+            std::vector<cv::Point> approx;
+            cv::approxPolyDP(contour, approx, cv::arcLength(contour, true) * 0.02, true);
+
+            // Check if the approximated contour is a rectangle
+            if (approx.size() == 4) {
+                // Draw the rectangle on the frame
+                cv::drawContours(frame, approx, -1, cv::Scalar(0, 255, 0), 2);
+            }
+        }
+
+        /****************************************************************************************/
+
+        // Find checkboxes and questions in the frame
+        for (auto &contour : contours) {
+            cv::Rect boundingRect = cv::boundingRect(contour);
+
+            if (boundingRect.height > boundingRect.width) {
+                questions.push_back(boundingRect);
+            } else {
+                checkboxes.push_back(boundingRect);
+            }
+        }
+
+        // Save checkbox template
+        if (!checkboxes.empty()) {
+            cv::Mat checkbox_template = frame(checkboxes[0]);
+            cv::imwrite("checkbox_template.jpg", checkbox_template);
+        }
+
+        // Find matches of checkbox template in the inverse perspective transformed image
+        cv::Mat img_rgb;
+        cv::cvtColor(frame, img_rgb, cv::COLOR_BGR2RGB);
+
+        cv::Ptr<cv::SIFT> sift = cv::SIFT::create();
+        std::vector<cv::KeyPoint> keypoints;
+        cv::Mat descriptors;
+        sift->detectAndCompute(img_rgb, cv::Mat(), keypoints, descriptors);
+
+        cv::Ptr<cv::DescriptorMatcher> matcher = cv::DescriptorMatcher::create(cv::DescriptorMatcher::FLANNBASED);
+        std::vector<cv::DMatch> matches;
+        matcher->match(descriptors, descriptors, matches);
+
+        double max_dist = 0;
+        double min_dist = 100;
+
+        for (int i = 0; i < descriptors.rows; i++) {
+            double dist = matches[i].distance;
+            if (dist < min_dist) min_dist = dist;
+            if (dist > max_dist) max_dist = dist;
+        }
+
+        std::vector<cv::DMatch> good_matches;
+        for (int i = 0; i < descriptors.rows; i++) {
+            if (matches[i].distance <= std::max(2 * min_dist, 0.02)) {
+                good_matches.push_back(matches[i]);
+            }
+        }
+
+        // Draw matches on the frame
+        cv::Mat img_matches;
+        cv::drawMatches(img_rgb, keypoints, img_rgb, keypoints, good_matches, img_matches,
+                        cv::Scalar::all(-1), cv::Scalar::all(-1), std::vector<char>(), cv::DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS);
+
+        // Display the image with good matches
+        cv::imshow("Good Matches", img_matches);
+
+        /********************************************************************************************/
+
+        // Exit if 'ESC' key is pressed
+        if (cv::waitKey(1) == 27) {
+            break;
+        }
+    }
+
+    // Close the text file
+    answersFile.close();
+
+    // Release video capture object
+    cap.release();
+
+    // Close all windows
+    cv::destroyAllWindows();
+
+    return 0;
+}
