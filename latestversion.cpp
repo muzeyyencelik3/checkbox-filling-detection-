@@ -1,3 +1,7 @@
+#include <opencv2/opencv.hpp>
+#include <iostream>
+#include <vector>
+
 int main() {
     // Kamera bağlantısını oluştur
     VideoCapture cap(0); // 0 varsayılan kamera
