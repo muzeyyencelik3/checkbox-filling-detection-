@@ -63,6 +63,7 @@ int main() {
         // Fotoğraf üzerinde kare çizme
         polylines(detectedA4, squares[i], true, color, thickness);
     }
+    
 
     // Daire vektöründeki her bir eleman için
     for (size_t i = 0; i < circles.size(); ++i) {
