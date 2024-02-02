@@ -1,74 +1,99 @@
 #include <opencv2/opencv.hpp>
-#include <iostream>
 
 using namespace cv;
 
 int main() {
-    // Kamera bağlantısını oluştur
-    VideoCapture cap(0); // 0 varsayılan kamera
+    // Resmi yükle
+    Mat image = imread("/home/kali/Documents/image/images/deneme.png");
 
-    if (!cap.isOpened()) {
-        std::cout << "Kamera bağlantısı açılamadı." << std::endl;
+    if (image.empty()) {
+        std::cerr << "Resim yüklenemedi." << std::endl;
         return -1;
     }
-    // Kamera çözünürlüğünü ayarlama (başarısız)
-    cap.set(CAP_PROP_FRAME_WIDTH, 1080); // Yükseklik
-    cap.set(CAP_PROP_FRAME_HEIGHT, 1920); // Genişlik
 
-    const float A4_WIDTH_MM = 210.0f; // A4 kağıdın genişliği mm cinsinden
-    const float A4_HEIGHT_MM = 297.0f; // A4 kağıdın yüksekliği mm cinsinden
+    // Gri tonlamaya dönüştür
+    Mat gray;
+    cvtColor(image, gray, COLOR_BGR2GRAY);
 
-    const float ASPECT_RATIO = A4_WIDTH_MM / A4_HEIGHT_MM; // A4 kağıdın en boy oranı
+    // Kenarları algıla (GaussianBlur ve Canny kenar dedektörü kullanıldı)
+    Mat blurred;
+    GaussianBlur(gray, blurred, Size(5, 5), 0);
+    Mat edges;
+    Canny(blurred, edges, 50, 150);
 
-    Mat frame;
-    while (true) {
-        cap >> frame; // Kameradan bir kare al
-        // Saat yönünde 90 derece döndürme Droidcame kaynaklı
-        transpose(frame, frame);
-        flip(frame, frame, 1); // Yatay ekseni etrafında döndürme
-        // Gri tonlamalı görüntü oluşturma
-        Mat gray;
-        cvtColor(frame, gray, COLOR_BGR2GRAY);
+    // Kenarları iyileştirme (dilate ve erode)
+    Mat dilated;
+    dilate(edges, dilated, Mat(), Point(-1, -1), 2);
+    Mat eroded;
+    erode(dilated, eroded, Mat(), Point(-1, -1), 1);
 
-        // Kenarları tespit etme
-        Mat edges;
-        Canny(gray, edges, 50, 150, 3);
+    // Konturları bul
+    std::vector<std::vector<Point>> contours;
+    findContours(eroded, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
 
-        // Contourları bulma
-        std::vector<std::vector<Point>> contours;
-        findContours(edges, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+    // Metin ve kutu vektörleri
+    std::vector<Rect> textRectangles;
+    std::vector<Rect> boxRectangles;
 
-        for (size_t i = 0; i < contours.size(); i++) {
-            // Algılanan alanın A4 boyutlarına yakın olup olmadığını kontrol etme
-            double area = contourArea(contours[i]);
-            Rect rect = boundingRect(contours[i]);
-            float aspectRatio = (float)rect.width / (float)rect.height;
+    // Her konturu değerlendir
+    for (size_t i = 0; i < contours.size(); i++) {
+        Rect boundingRect = cv::boundingRect(contours[i]);
 
-            // Algılanan alanın genişlik ve boy oranı A4'e yakınsa
-            if (aspectRatio > ASPECT_RATIO * 0.9 && aspectRatio < ASPECT_RATIO * 1.1 &&
-                area > 0.9 * A4_WIDTH_MM * A4_HEIGHT_MM && area < 1.1 * A4_WIDTH_MM * A4_HEIGHT_MM) {
-                // Belgeyi dikdörtgen içine alma ve çizgi ile işaretleme
-                rectangle(frame, rect, Scalar(0, 255, 0), 2);
+        // Belirli bir boyut aralığına sahip dikdörtgenleri kabul et (checkbox'ları filtrele)
+        int minCheckboxSize = 10;
+        int maxCheckboxSize = 22;
 
-                // Algılanan dikdörtgeni 'detected_page.png' olarak kaydet
-                Mat detectedPage = frame(rect);
-                imwrite("detected_page.png", detectedPage);
+        if (boundingRect.width > minCheckboxSize && boundingRect.width < maxCheckboxSize &&
+            boundingRect.height > minCheckboxSize && boundingRect.height < maxCheckboxSize) {
+            // Checkbox dışında kalan diğer konturları yeşil ile çiz
+            rectangle(image, boundingRect, Scalar(0, 255, 0), 2);
 
-                std::cout << "Sayfa algılandı ve 'detected_page.png' olarak kaydedildi." << std::endl;
+            // Yeşil çevrelenen kontürler metin olarak kabul edilsin
+            boxRectangles.push_back(boundingRect);
+        } else {
+            // Köşegen noktalarını çiz
+            rectangle(image, boundingRect, Scalar(255, 0, 0), 2);
 
-                // Ekranda gösterme
-                imshow("Sayfa Algılama", frame);
-                waitKey(0);
+            // Mavi çevrelenen kontürler kutu olarak kabul edilsin
+            textRectangles.push_back(boundingRect);
+        }
+    }
 
-                return 0;
+    // Metin ve kutu vektörlerini sırala
+    std::sort(textRectangles.begin(), textRectangles.end(), [](const Rect &a, const Rect &b) {
+        return a.y < b.y;
+    });
+
+    std::sort(boxRectangles.begin(), boxRectangles.end(), [](const Rect &a, const Rect &b) {
+        return a.y < b.y;
+    });
+
+    // Kontrol et ve etiketle
+    for (size_t i = 0; i < boxRectangles.size(); ++i) {
+        rectangle(image, boxRectangles[i], Scalar(255, 0, 0), 2);
+
+        // Kutu numarasını ekle
+        putText(image, "Kutu-" + std::to_string(i + 1), Point(boxRectangles[i].x + boxRectangles[i].width + 5, boxRectangles[i].y + 10),
+                FONT_HERSHEY_SIMPLEX, 0.5, Scalar(255, 0, 0), 1);
+
+        // "choice" olarak işaretlenmiş mi?
+        bool isChoice = false;
+
+        // Text rectangles ile kontrol et
+        for (size_t j = 0; j < textRectangles.size(); ++j) {
+            if (abs(boxRectangles[i].y - textRectangles[j].y) < 5) {
+                // Eğer aynı yükseklikte ise "choice"
+                rectangle(image, textRectangles[j], Scalar(0, 255, 0), 2);
+                putText(image, "choice", Point(textRectangles[j].x + textRectangles[j].width + 5, textRectangles[j].y + 10),
+                        FONT_HERSHEY_SIMPLEX, 0.5, Scalar(0, 255, 0), 1);
+                isChoice = true;
             }
         }
-
-        // Ekranda görüntüyü gösterme
-        imshow("Sayfa Algılama", frame);
-        if (waitKey(30) >= 0)
-            break;
     }
+
+    // Sonucu göster
+    imshow("Sıralı Checkbox ve Metin Tespiti", image);
+    waitKey(0);
 
     return 0;
 }
